@@ -1,0 +1,511 @@
+{
+  "name": "X News Bot - Daily Automated Posting",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 2
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "News Posting Schedule",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://newsapi.org/v2/top-headlines",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "apiKey",
+              "value": "{{ $vars.NEWS_API_KEY }}"
+            },
+            {
+              "name": "country",
+              "value": "us"
+            },
+            {
+              "name": "pageSize",
+              "value": "20"
+            },
+            {
+              "name": "category",
+              "value": "{{ $vars.NEWS_CATEGORY || 'general' }}"
+            }
+          ]
+        }
+      },
+      "id": "news-fetcher",
+      "name": "Fetch Breaking News",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Filter and rank news articles\nconst articles = $input.first().json.articles || [];\nconst currentTime = new Date();\nconst twoHoursAgo = new Date(currentTime.getTime() - 2 * 60 * 60 * 1000);\n\n// Filter recent, high-quality articles\nconst filteredArticles = articles.filter(article => {\n  const publishedDate = new Date(article.publishedAt);\n  return (\n    publishedDate > twoHoursAgo &&\n    article.title &&\n    article.description &&\n    article.url &&\n    !article.title.includes('[Removed]') &&\n    article.title.length > 20 &&\n    article.description.length > 50\n  );\n});\n\n// Score articles based on engagement potential\nconst scoredArticles = filteredArticles.map(article => {\n  let score = 0;\n  const title = article.title.toLowerCase();\n  const description = article.description.toLowerCase();\n  \n  // High-engagement keywords\n  const trendingKeywords = ['breaking', 'urgent', 'shocking', 'revealed', 'exclusive', 'major', 'crisis', 'breakthrough', 'scandal', 'record', 'historic', 'unprecedented'];\n  const techKeywords = ['ai', 'tech', 'crypto', 'bitcoin', 'innovation', 'startup', 'meta', 'google', 'apple', 'tesla'];\n  const businessKeywords = ['market', 'stock', 'economy', 'billion', 'million', 'investment', 'profit', 'loss'];\n  \n  trendingKeywords.forEach(keyword => {\n    if (title.includes(keyword) || description.includes(keyword)) score += 3;\n  });\n  \n  techKeywords.forEach(keyword => {\n    if (title.includes(keyword) || description.includes(keyword)) score += 2;\n  });\n  \n  businessKeywords.forEach(keyword => {\n    if (title.includes(keyword) || description.includes(keyword)) score += 2;\n  });\n  \n  // Bonus for reputable sources\n  const reputableSources = ['reuters', 'ap news', 'bbc', 'cnn', 'bloomberg', 'wsj'];\n  if (reputableSources.some(source => article.source.name.toLowerCase().includes(source))) {\n    score += 1;\n  }\n  \n  return {\n    ...article,\n    engagementScore: score,\n    category: getCategory(title, description)\n  };\n});\n\n// Sort by score and take top articles\nconst topArticles = scoredArticles\n  .sort((a, b) => b.engagementScore - a.engagementScore)\n  .slice(0, 10);\n\nfunction getCategory(title, description) {\n  const content = (title + ' ' + description).toLowerCase();\n  if (content.match(/tech|ai|crypto|bitcoin|startup/)) return 'tech';\n  if (content.match(/market|stock|economy|business|finance/)) return 'business';\n  if (content.match(/sport|football|basketball|soccer/)) return 'sports';\n  if (content.match(/health|medical|covid|vaccine/)) return 'health';\n  if (content.match(/politics|election|government|policy/)) return 'politics';\n  return 'general';\n}\n\nreturn topArticles.map(article => ({ json: article }));"
+      },
+      "id": "news-ranker",
+      "name": "AI News Ranker & Filter",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4",
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "You are a viral social media content creator specializing in news content for X (Twitter). Create engaging, click-worthy posts that drive engagement while maintaining accuracy. Use trending formats, relevant hashtags, and compelling hooks."
+            },
+            {
+              "role": "user",
+              "content": "Create a viral X (Twitter) post for this news article:\n\nTitle: {{ $json.title }}\nDescription: {{ $json.description }}\nCategory: {{ $json.category }}\nSource: {{ $json.source.name }}\n\nRequirements:\n- Keep under 280 characters\n- Use 2-3 relevant trending hashtags\n- Add an engaging hook or question\n- Include call-to-action for engagement\n- Make it shareable and discussion-worthy\n\nReturn only the tweet content, no additional text."
+            }
+          ]
+        }
+      },
+      "id": "ai-tweet-generator",
+      "name": "AI Tweet Generator",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Enhance tweet with additional engagement features\nconst article = $input.first().json;\nconst generatedTweet = $previous.first().json.content || $previous.first().json.text;\n\n// Add engagement boosters\nconst engagementBoosters = [\n  '🧵 Thread below 👇',\n  '📈 This is huge!',\n  '⚡ BREAKING:',\n  '🔥 Hot take:',\n  '💭 What do you think?',\n  '🚨 Alert:',\n  '📊 The numbers don't lie',\n  '🎯 Key insight:'\n];\n\n// Select appropriate booster based on category\nlet booster = '';\nif (article.category === 'tech') booster = '⚡ TECH:';\nelse if (article.category === 'business') booster = '📈 MARKET:';\nelse if (article.category === 'politics') booster = '🚨 POLITICS:';\nelse if (article.engagementScore > 5) booster = '🔥 BREAKING:';\nelse booster = engagementBoosters[Math.floor(Math.random() * engagementBoosters.length)];\n\n// Format final tweet\nlet finalTweet = generatedTweet;\nif (!finalTweet.includes('🔥') && !finalTweet.includes('⚡') && !finalTweet.includes('📈')) {\n  finalTweet = `${booster} ${finalTweet}`;\n}\n\n// Add thread promise for high-engagement articles\nif (article.engagementScore > 6 && !finalTweet.includes('🧵')) {\n  finalTweet += '\\n\\n🧵 Full analysis below 👇';\n}\n\n// Ensure we have engagement hashtags\nconst categoryHashtags = {\n  tech: ['#Tech', '#AI', '#Innovation'],\n  business: ['#Markets', '#Business', '#Economy'],\n  politics: ['#Politics', '#News', '#Breaking'],\n  sports: ['#Sports', '#GameDay', '#Athletics'],\n  health: ['#Health', '#Medical', '#Wellness'],\n  general: ['#Breaking', '#News', '#Trending']\n};\n\nconst relevantHashtags = categoryHashtags[article.category] || categoryHashtags.general;\nif (!finalTweet.includes('#')) {\n  finalTweet += ' ' + relevantHashtags.slice(0, 2).join(' ');\n}\n\nreturn [{\n  json: {\n    ...article,\n    tweet_content: finalTweet,\n    scheduled_time: new Date().toISOString(),\n    post_type: 'main_tweet',\n    engagement_potential: article.engagementScore\n  }\n}];"
+      },
+      "id": "tweet-enhancer",
+      "name": "Tweet Engagement Enhancer",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "text": "{{ $json.tweet_content }}",
+        "additionalFields": {}
+      },
+      "id": "x-poster",
+      "name": "Post to X (Twitter)",
+      "type": "n8n-nodes-base.twitter",
+      "typeVersion": 2,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "high-engagement",
+              "leftValue": "{{ $json.engagement_potential }}",
+              "rightValue": "6",
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "thread-checker",
+      "name": "Check for Thread Creation",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1560, 300]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4",
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "Create a detailed Twitter thread (3-5 tweets) expanding on the news article. Each tweet should be under 280 characters. Make it informative, engaging, and include relevant insights, implications, or analysis."
+            },
+            {
+              "role": "user",
+              "content": "Create a Twitter thread for:\n\nTitle: {{ $json.title }}\nDescription: {{ $json.description }}\nCategory: {{ $json.category }}\n\nStructure:\n1/ Key points and implications\n2/ Background context\n3/ What this means going forward\n4/ Call to action for discussion\n\nReturn as JSON array: [{\"tweet\": \"content\"}]"
+            }
+          ]
+        }
+      },
+      "id": "thread-generator",
+      "name": "AI Thread Generator",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1,
+      "position": [1780, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Post thread replies\nconst threadContent = JSON.parse($input.first().json.content || '[]');\nconst originalTweetId = $input.first().json.tweet_id;\nconst article = $input.first().json;\n\nconst threadTweets = threadContent.map((tweet, index) => ({\n  json: {\n    tweet_content: `${index + 2}/ ${tweet.tweet}`,\n    reply_to: index === 0 ? originalTweetId : null,\n    article_title: article.title,\n    thread_position: index + 2\n  }\n}));\n\nreturn threadTweets;"
+      },
+      "id": "thread-formatter",
+      "name": "Format Thread Tweets",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2000, 200]
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "text": "{{ $json.tweet_content }}",
+        "additionalFields": {
+          "inReplyToStatusId": "{{ $json.reply_to }}"
+        }
+      },
+      "id": "thread-poster",
+      "name": "Post Thread Replies",
+      "type": "n8n-nodes-base.twitter",
+      "typeVersion": 2,
+      "position": [2220, 200]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "table": "news_posts_log",
+        "columns": "tweet_id, article_title, tweet_content, category, engagement_score, posted_at, article_url",
+        "values": "{{ $json.id_str }}, {{ $json.title }}, {{ $json.tweet_content }}, {{ $json.category }}, {{ $json.engagement_potential }}, NOW(), {{ $json.url }}"
+      },
+      "id": "post-logger",
+      "name": "Log Posts to Database",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [1560, 400]
+    },
+    {
+      "parameters": {
+        "url": "https://api.analytics-service.com/track",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $vars.ANALYTICS_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "event_type",
+              "value": "tweet_posted"
+            },
+            {
+              "name": "tweet_id",
+              "value": "{{ $json.id_str }}"
+            },
+            {
+              "name": "category",
+              "value": "{{ $json.category }}"
+            },
+            {
+              "name": "engagement_score",
+              "value": "{{ $json.engagement_potential }}"
+            },
+            {
+              "name": "timestamp",
+              "value": "{{ $json.scheduled_time }}"
+            }
+          ]
+        }
+      },
+      "id": "analytics-tracker",
+      "name": "Track Analytics",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1780, 400]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 6
+            }
+          ]
+        }
+      },
+      "id": "engagement-monitor",
+      "name": "Engagement Monitoring",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [240, 600]
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "operation": "search",
+        "searchText": "from:@{{ $vars.TWITTER_USERNAME }} -is:reply",
+        "returnAll": false,
+        "limit": 50,
+        "additionalFields": {
+          "includeEntities": true
+        }
+      },
+      "id": "fetch-own-tweets",
+      "name": "Fetch Recent Posts",
+      "type": "n8n-nodes-base.twitter",
+      "typeVersion": 2,
+      "position": [460, 600]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Analyze engagement metrics\nconst tweets = $input.all();\nconst engagementData = tweets.map(item => {\n  const tweet = item.json;\n  const engagementRate = (tweet.retweet_count + tweet.favorite_count + tweet.reply_count) / Math.max(1, tweet.user.followers_count) * 100;\n  \n  return {\n    tweet_id: tweet.id_str,\n    text: tweet.text,\n    retweets: tweet.retweet_count || 0,\n    likes: tweet.favorite_count || 0,\n    replies: tweet.reply_count || 0,\n    engagement_rate: engagementRate.toFixed(4),\n    created_at: tweet.created_at,\n    total_engagement: (tweet.retweet_count || 0) + (tweet.favorite_count || 0) + (tweet.reply_count || 0)\n  };\n});\n\n// Find top performing content\nconst topPosts = engagementData\n  .sort((a, b) => b.total_engagement - a.total_engagement)\n  .slice(0, 5);\n\n// Calculate daily revenue estimate (engagement-based)\nconst totalEngagement = engagementData.reduce((sum, tweet) => sum + tweet.total_engagement, 0);\nconst estimatedDailyRevenue = (totalEngagement * 0.001).toFixed(2); // $0.001 per engagement\n\nreturn [{\n  json: {\n    daily_stats: {\n      total_posts: engagementData.length,\n      total_engagement: totalEngagement,\n      avg_engagement_rate: (engagementData.reduce((sum, tweet) => sum + parseFloat(tweet.engagement_rate), 0) / engagementData.length).toFixed(4),\n      estimated_daily_revenue: estimatedDailyRevenue,\n      top_performing_posts: topPosts\n    },\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "engagement-analyzer",
+      "name": "Analyze Engagement & Revenue",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 600]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "table": "daily_analytics",
+        "columns": "date, total_posts, total_engagement, avg_engagement_rate, estimated_revenue, top_posts_json",
+        "values": "CURRENT_DATE, {{ $json.daily_stats.total_posts }}, {{ $json.daily_stats.total_engagement }}, {{ $json.daily_stats.avg_engagement_rate }}, {{ $json.daily_stats.estimated_daily_revenue }}, '{{ JSON.stringify($json.daily_stats.top_performing_posts) }}'"
+      },
+      "id": "analytics-logger",
+      "name": "Log Daily Analytics",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [900, 600]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "revenue-threshold",
+              "leftValue": "{{ $json.daily_stats.estimated_daily_revenue }}",
+              "rightValue": "10",
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "revenue-checker",
+      "name": "Check Revenue Milestone",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1120, 600]
+    },
+    {
+      "parameters": {
+        "subject": "🎉 Daily Revenue Milestone Reached!",
+        "message": "Great news! Your X news bot has reached a revenue milestone today:\\n\\n📊 Daily Stats:\\n• Total Posts: {{ $json.daily_stats.total_posts }}\\n• Total Engagement: {{ $json.daily_stats.total_engagement }}\\n• Avg Engagement Rate: {{ $json.daily_stats.avg_engagement_rate }}%\\n• Estimated Daily Revenue: ${{ $json.daily_stats.estimated_daily_revenue }}\\n\\n🔥 Top Performing Posts:\\n{{ $json.daily_stats.top_performing_posts.map(post => `• ${post.text.substring(0, 50)}... (${post.total_engagement} engagements)`).join('\\n') }}\\n\\nKeep up the great work!",
+        "options": {}
+      },
+      "id": "revenue-notification",
+      "name": "Revenue Milestone Alert",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2,
+      "position": [1340, 500]
+    }
+  ],
+  "connections": {
+    "News Posting Schedule": {
+      "main": [
+        [
+          {
+            "node": "Fetch Breaking News",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Breaking News": {
+      "main": [
+        [
+          {
+            "node": "AI News Ranker & Filter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI News Ranker & Filter": {
+      "main": [
+        [
+          {
+            "node": "AI Tweet Generator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Tweet Generator": {
+      "main": [
+        [
+          {
+            "node": "Tweet Engagement Enhancer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tweet Engagement Enhancer": {
+      "main": [
+        [
+          {
+            "node": "Post to X (Twitter)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post to X (Twitter)": {
+      "main": [
+        [
+          {
+            "node": "Check for Thread Creation",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Log Posts to Database",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Track Analytics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check for Thread Creation": {
+      "main": [
+        [
+          {
+            "node": "AI Thread Generator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Thread Generator": {
+      "main": [
+        [
+          {
+            "node": "Format Thread Tweets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Thread Tweets": {
+      "main": [
+        [
+          {
+            "node": "Post Thread Replies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Engagement Monitoring": {
+      "main": [
+        [
+          {
+            "node": "Fetch Recent Posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Recent Posts": {
+      "main": [
+        [
+          {
+            "node": "Analyze Engagement & Revenue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze Engagement & Revenue": {
+      "main": [
+        [
+          {
+            "node": "Log Daily Analytics",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Check Revenue Milestone",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Revenue Milestone": {
+      "main": [
+        [
+          {
+            "node": "Revenue Milestone Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    "news-bot",
+    "automation",
+    "passive-income",
+    "social-media"
+  ],
+  "triggerCount": 2,
+  "updatedAt": "2024-08-25T00:00:00.000Z",
+  "versionId": "2.0.0"
+}
